@@ -1,0 +1,5 @@
+requests
+pandas
+simple-salesforce
+python-dotenv
+colorama
