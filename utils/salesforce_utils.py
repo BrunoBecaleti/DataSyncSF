@@ -12,7 +12,7 @@ cache = {}
 # Lista de campos do sistema que devem ser ignorados
 system_fields = {
     'CreatedDate', 'LastModifiedDate', 'SystemModstamp', 
-    'IsDeleted', 'LastModifiedById', 'CreatedById', 'LastViewedDate', 'LastReferencedDate', 'IsActive', 'NamespacePrefix'
+    'IsDeleted', 'LastModifiedById', 'CreatedById', 'LastViewedDate', 'LastReferencedDate', 'IsActive', 'NamespacePrefix', 'OwnerId'
 }
 
 # Lista de objetos de sistema que devem ser ignorados
@@ -117,10 +117,20 @@ def get_direct_dependencies(graph, root_object):
     traverse(root_object)
     return direct_dependencies
 
-def process_record_with_dependencies(sf_sandbox, sf_dev, object_name, record, direct_dependencies):
+def process_record_with_dependencies(sf_sandbox, sf_dev, object_name, record, direct_dependencies, processed_records=None):
     """
     Processa um registro no Salesforce, navegando e inserindo dependências antes de inserir o registro principal.
     """
+    if processed_records is None:
+        processed_records = set()
+
+    record_id = record.get('Id')
+    if record_id in processed_records:
+        print(f"Registro {record_id} já processado, evitando loop.")
+        return
+
+    processed_records.add(record_id)
+
     for field, value in record.items():
         # Verificar se o campo está em direct_dependencies
         if object_name in direct_dependencies:
@@ -133,30 +143,29 @@ def process_record_with_dependencies(sf_sandbox, sf_dev, object_name, record, di
                     dependent_records = selectObject(sf_sandbox, dep_successor, fields, where_clause=f" WHERE Id = '{value}' ")
                     for dep_record in dependent_records:
                         # Processar o registro de dependência recursivamente
-                        process_record_with_dependencies(sf_sandbox, sf_dev, dep_successor, dep_record, direct_dependencies)
+                        process_record_with_dependencies(sf_sandbox, sf_dev, dep_successor, dep_record, direct_dependencies, processed_records)
                         # Verificar se o registro de dependência já existe no Salesforce de destino
                         existing_records = selectObject(sf_dev, dep_successor, fields, where_clause=f" WHERE Name = '{dep_record['Name']}' ")
                         if existing_records:
-                            print(f"Registro de dependência já existe: {existing_records}")
+                            print(f"Registro de dependência já existe: {existing_records[0]['Name']}")
                             new_id = existing_records[0]['Id']
                         else:
-                            # Inserir o registro de dependência no Salesforce de destino
-                            dep_record['Id'] = None
-
+                            # Tentar inserir o registro de dependência no Salesforce de destino
                             result = try_insert_record(sf_dev, dep_successor, dep_record)
                             new_id = result['id']
                         # Atualizar o campo de dependência no registro principal com o novo ID
                         record[field] = new_id
     
-    # Inserir o registro principal no Salesforce de destino
-    try:
-        record['Id'] = None
-
-        result = try_insert_record(sf_dev, object_name, record)
-        return result
-    except SalesforceMalformedRequest as e:
-        print(f"Erro ao inserir registro: {e}")
-        return None
+    # Verificar se o registro principal já existe no Salesforce de destino
+    if 'Id' in record:
+        existing_records = selectObject(sf_dev, object_name, ['Id', 'Name'], where_clause=f" WHERE Id = '{record['Id']}' ")
+        if existing_records:
+            print(f"Registro principal já existe: {existing_records[0]['Id']} (Nome: {existing_records[0]['Name']})")
+            return existing_records[0]
+    
+    # Tentar inserir o registro principal no Salesforce de destino
+    result = try_insert_record(sf_dev, object_name, record)
+    return result
 
 def remove_cycles(graph):
     """Remove ciclos do grafo."""
@@ -198,6 +207,7 @@ def try_insert_record(sf, object_name, record, max_attempts=3):
     while attempt < max_attempts:
         try:
             record = {k: v for k, v in record.items() if k not in problematic_fields}
+            record['Id'] = None  # Forçar a criação de um novo registro
 
             result = sf.__getattr__(object_name).create(record)
             if result['success']:
