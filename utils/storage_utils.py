@@ -18,3 +18,14 @@ def estimate_data_size(records):
     total_size_kb = total_records * estimated_size_per_record_kb
     total_size_mb = total_size_kb / 1024  # Converter para MB
     return total_size_mb
+
+def get_storage_limits(sf):
+    """Obtém o limite de armazenamento restante em MB."""
+    # Esta é uma implementação simplificada. Você pode precisar ajustar conforme a API do Salesforce
+    limits = sf.limits()
+    return limits['DataStorageMB']['Remaining']
+
+def estimate_data_size(records):
+    """Estima o tamanho dos dados em MB."""
+    # Esta é uma estimativa muito simplificada. Você pode precisar de uma implementação mais precisa
+    return len(str(records)) / (1024 * 1024)
